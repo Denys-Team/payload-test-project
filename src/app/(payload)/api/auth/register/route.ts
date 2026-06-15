@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import configPromise from '@payload-config'
-import jwt from 'jsonwebtoken'
-
-const JWT_SECRET = process.env.PAYLOAD_SECRET || 'fallback-secret'
+import { buildAuthResponse, findUserByEmail, normalizeEmail } from '../auth-utils'
 
 export async function POST(request: NextRequest) {
   try {
@@ -11,9 +9,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
 
     const { name, email, password } = body
+    const normalizedEmail = typeof email === 'string' ? normalizeEmail(email) : ''
+    const trimmedName = typeof name === 'string' ? name.trim() : ''
 
-    // Validation
-    if (!name || !email || !password) {
+    if (!trimmedName || !normalizedEmail || !password) {
       return NextResponse.json({ error: 'All fields are required' }, { status: 400 })
     }
 
@@ -21,66 +20,51 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
     }
 
-    // Check if user already exists
-    const existingUser = await payload.find({
-      collection: 'users',
-      where: {
-        email: {
-          equals: email,
-        },
-      },
-      limit: 1,
-    })
-
-    if (existingUser.docs.length > 0) {
+    const existingUser = await findUserByEmail(payload, normalizedEmail)
+    if (existingUser) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 400 })
     }
 
-    // Create new user (override access to allow public registration)
-    const user = await payload.create({
+    await payload.create({
       collection: 'users',
       data: {
-        name: name.trim(),
-        email: email.trim(),
+        name: trimmedName,
+        email: normalizedEmail,
         password,
-        role: 'user', // Default role for new users
+        role: 'user',
       },
-      overrideAccess: true, // Allow creation without admin access
+      overrideAccess: true,
     })
 
-    // Create JWT token
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
+    const loginResult = await payload.login({
+      collection: 'users',
+      data: {
+        email: normalizedEmail,
+        password,
       },
-      JWT_SECRET,
-      { expiresIn: '7d' },
-    )
-
-    // Return user data without password
-    const { password: _, ...userWithoutPassword } = user
-
-    return NextResponse.json({
-      message: 'User successfully registered',
-      user: userWithoutPassword,
-      token,
     })
+
+    if (!loginResult.user || !loginResult.token) {
+      return NextResponse.json(
+        { error: 'Account created but login failed. Please try logging in.' },
+        { status: 500 },
+      )
+    }
+
+    return buildAuthResponse(loginResult.user, loginResult.token, 'User successfully registered')
   } catch (error) {
     console.error('Registration error:', error)
-    
-    // Provide more specific error message
+
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    
-    // Check for common Payload errors
+
     if (errorMessage.includes('E11000') || errorMessage.includes('duplicate')) {
       return NextResponse.json({ error: 'User with this email already exists' }, { status: 400 })
     }
-    
+
     if (errorMessage.includes('validation')) {
       return NextResponse.json({ error: 'Invalid data provided' }, { status: 400 })
     }
-    
+
     return NextResponse.json({ error: 'Error registering user. Please try again.' }, { status: 500 })
   }
 }

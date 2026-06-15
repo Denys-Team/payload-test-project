@@ -1,8 +1,9 @@
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { getPayload } from 'payload'
+import configPromise from '@payload-config'
 
 import type { User } from '../payload-types'
-import { getServerSideURL } from './getURL'
 
 export const getMeUser = async (args?: {
   nullUserRedirect?: string
@@ -15,7 +16,6 @@ export const getMeUser = async (args?: {
   const cookieStore = await cookies()
   const token = cookieStore.get('payload-token')?.value
 
-  // If no token and we have a redirect URL, redirect immediately
   if (!token && nullUserRedirect) {
     redirect(nullUserRedirect)
   }
@@ -24,24 +24,12 @@ export const getMeUser = async (args?: {
 
   if (token) {
     try {
-      const baseUrl = getServerSideURL() || process.env.NEXT_PUBLIC_SERVER_URL || 'http://localhost:3000'
-      const meUserReq = await fetch(`${baseUrl}/api/users/me`, {
-        headers: {
-          Authorization: `JWT ${token}`,
-        },
-        cache: 'no-store',
-      })
-
-      if (meUserReq.ok) {
-        const contentType = meUserReq.headers.get('content-type')
-        if (contentType?.includes('application/json')) {
-          const data = await meUserReq.json()
-          user = data.user || null
-        }
-      }
+      const payload = await getPayload({ config: configPromise })
+      const headersList = await headers()
+      const { user: authUser } = await payload.auth({ headers: headersList })
+      user = (authUser as User) ?? null
     } catch (error) {
-      console.error('[getMeUser] Error fetching user:', error)
-      // Continue - user will be null
+      console.error('[getMeUser] Error:', error)
     }
   }
 
@@ -53,7 +41,6 @@ export const getMeUser = async (args?: {
     redirect(nullUserRedirect)
   }
 
-  // At this point we have a valid user (or would have redirected)
   return {
     token: token!,
     user: user!,

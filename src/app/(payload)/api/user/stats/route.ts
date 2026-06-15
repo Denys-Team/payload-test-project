@@ -35,64 +35,31 @@ const hasRichTextContent = (richText: any): boolean => {
 
 export async function GET(request: NextRequest) {
   try {
-    let userId: number | null = null
-    const authHeader = request.headers.get('authorization')
-    const payloadToken = request.cookies.get('payload-token')?.value
-
     const payload = await getPayload({ config: configPromise })
 
-    // Check Bearer token from header
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7) // Remove "Bearer " prefix
+    let userId: number | null = null
+    const authHeader = request.headers.get('authorization')
 
+    // Bearer token from custom JWT
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.slice(7)
       try {
-        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string; email: string }
-
-        // Normalize userId to number (Payload uses numeric IDs)
+        const decoded = jwt.verify(token, JWT_SECRET) as { userId: string | number }
         const normalizedUserId =
           typeof decoded.userId === 'string' ? parseInt(decoded.userId, 10) : decoded.userId
-
         if (!isNaN(normalizedUserId)) {
           userId = normalizedUserId
         }
-      } catch (jwtError) {
-        // Invalid token, try cookie
+      } catch {
+        // fall through to cookie auth
       }
     }
 
-    // If Bearer token not found or invalid, check payload-token cookie
-    if (!userId && payloadToken) {
-      try {
-        // Use Payload API to get user from cookie
-        const origin = request.nextUrl.origin
-
-        // Use short timeout for local request
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 2000) // 2 seconds timeout
-
-        const meUserReq = await fetch(`${origin}/api/users/me`, {
-          headers: {
-            Authorization: `JWT ${payloadToken}`,
-          },
-          signal: controller.signal,
-          cache: 'no-store',
-        })
-
-        clearTimeout(timeoutId)
-
-        if (meUserReq.ok) {
-          const { user } = await meUserReq.json()
-          if (user && user.id) {
-            userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id
-          }
-        }
-      } catch (error: any) {
-        // If it's a timeout, log but don't crash
-        if (error.name === 'AbortError' || error.code === 'UND_ERR_HEADERS_TIMEOUT') {
-          console.error('Timeout when fetching user from cookie:', error)
-        } else {
-          console.error('Error fetching user from cookie:', error)
-        }
+    // payload-token cookie via Payload auth
+    if (!userId) {
+      const { user } = await payload.auth({ headers: request.headers })
+      if (user?.id) {
+        userId = typeof user.id === 'string' ? parseInt(user.id, 10) : user.id
       }
     }
 

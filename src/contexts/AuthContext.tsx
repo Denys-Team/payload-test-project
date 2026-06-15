@@ -43,6 +43,7 @@ interface AuthContextType {
   logout: () => void
   isAuthenticated: boolean
   refreshUser: () => Promise<void>
+  ensureServerSession: () => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -65,6 +66,29 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
+  const ensureServerSession = async (): Promise<boolean> => {
+    try {
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+        cache: 'no-store',
+      })
+
+      if (!response.ok) return false
+
+      const data = await response.json()
+      if (data.user) {
+        setUser(data.user)
+        setToken('cookie-auth')
+        return true
+      }
+
+      return false
+    } catch (error) {
+      console.error('Ensure server session error:', error)
+      return false
+    }
+  }
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -79,8 +103,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
           })
 
           if (response.ok) {
+            const userData = JSON.parse(savedUser)
             setToken(savedToken)
-            setUser(JSON.parse(savedUser))
+            setUser(userData)
+            // Prefer server cookie session when available
+            const hasCookieSession = await ensureServerSession()
+            if (!hasCookieSession) {
+              setToken(savedToken)
+              setUser(userData)
+            }
             setLoading(false)
             return
           } else {
@@ -119,6 +150,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ email, password }),
       })
 
@@ -129,6 +161,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(data.user)
         localStorage.setItem('authToken', data.token)
         localStorage.setItem('user', JSON.stringify(data.user))
+        await ensureServerSession()
         return { success: true }
       } else {
         return { success: false, error: data.error || 'Login error' }
@@ -146,6 +179,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify({ name, email, password }),
       })
 
@@ -156,6 +190,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setUser(data.user)
         localStorage.setItem('authToken', data.token)
         localStorage.setItem('user', JSON.stringify(data.user))
+        await ensureServerSession()
         return { success: true }
       } else {
         return { success: false, error: data.error || 'Registration error' }
@@ -292,6 +327,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     logout,
     isAuthenticated: !!user && !!token,
     refreshUser,
+    ensureServerSession,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

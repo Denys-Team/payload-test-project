@@ -201,6 +201,7 @@ export async function POST(request: NextRequest) {
     const result = await payload.create({
       collection: 'test-results',
       data: dataToSave,
+      overrideAccess: true,
     })
 
     const responseData = {
