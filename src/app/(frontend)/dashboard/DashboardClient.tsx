@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -44,8 +44,28 @@ interface DashboardClientProps {
 export function DashboardClient({ initialStats, initialUser }: DashboardClientProps) {
   const { user: authUser } = useAuth()
   const user = initialUser ?? authUser
-  const stats = initialStats
+  const [stats, setStats] = useState<Stats>(initialStats)
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+
+  // Refetch stats on client — ensures results appear after test + register flow
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const res = await fetch('/api/user/stats', {
+          credentials: 'include',
+          cache: 'no-store',
+        })
+        if (res.ok) {
+          const data: Stats = await res.json()
+          setStats(data)
+        }
+      } catch (error) {
+        console.error('Failed to load dashboard stats:', error)
+      }
+    }
+
+    void loadStats()
+  }, [])
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600)
